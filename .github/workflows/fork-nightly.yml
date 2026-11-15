@@ -1,0 +1,96 @@
+name: Fork nightly
+
+# Builds the newest upstream nightly with this fork's commits on top, and
+# publishes it here so the desktop app's update button installs it.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-nightly
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.find.outputs.tag }}
+    steps:
+      - name: Find an upstream nightly this fork has not built
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh release list -R pingdotgg/t3code --exclude-drafts --limit 30 --json tagName \
+            --jq '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\."))][0] // ""')"
+          if [ -z "$tag" ]; then
+            echo "No upstream nightly release found." >&2
+            exit 1
+          fi
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$tag is already released here."
+          else
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.tag != ''
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Put the fork's commits on the upstream nightly
+        run: |
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags upstream main "refs/tags/$TAG:refs/upstream-nightly"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # This workflow is fork tooling, not part of the app.
+          commits="$(git rev-list --reverse --no-merges upstream/main..HEAD -- . ':(exclude).github/workflows/fork-nightly.yml')"
+          git checkout --detach refs/upstream-nightly
+          if [ -n "$commits" ]; then
+            git cherry-pick $commits
+          fi
+          git log --oneline refs/upstream-nightly~1..HEAD
+
+      - uses: ./.github/actions/setup-ci-deps
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - name: Build the signed macOS app
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          if [ -z "$CSC_LINK" ] || [ -z "$CSC_KEY_PASSWORD" ]; then
+            echo "Set the CSC_LINK and CSC_KEY_PASSWORD secrets. Unsigned builds cannot update in place." >&2
+            exit 1
+          fi
+          # The public T3 Connect identifiers, as upstream preview builds use them.
+          eval "$(grep -E '^T3CODE_(CLERK_PUBLISHABLE_KEY|CLERK_JWT_TEMPLATE|CLERK_CLI_OAUTH_CLIENT_ID|RELAY_URL)=' .env.example | sed 's/^/export /')"
+          node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 \
+            --signed --build-version "${TAG#v}"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Upstream [\`$TAG\`](https://github.com/pingdotgg/t3code/releases/tag/$TAG) with this fork's commits:"
+            echo
+            git log --format='- %s' refs/upstream-nightly..HEAD
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+            --title "T3 Code Nightly ${TAG#v} (fork)" --notes-file "$RUNNER_TEMP/notes.md" \
+            release/*.dmg release/*.zip release/*.blockmap release/nightly-mac.yml
