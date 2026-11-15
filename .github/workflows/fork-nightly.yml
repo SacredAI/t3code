@@ -90,8 +90,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Upstream's notes come first and unchanged, so the update dialog shows them as upstream does.
           {
-            echo "Upstream [\`$TAG\`](https://github.com/pingdotgg/t3code/releases/tag/$TAG) with this fork's commits:"
+            gh release view "$TAG" -R pingdotgg/t3code --json body --jq .body
+            echo
+            echo "## Fork commits"
+            echo
+            echo "Added on top of upstream [\`$TAG\`](https://github.com/pingdotgg/t3code/releases/tag/$TAG):"
             echo
             git log --format='- %s' refs/upstream-nightly..HEAD
           } > "$RUNNER_TEMP/notes.md"
