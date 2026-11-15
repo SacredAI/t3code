@@ -96,6 +96,7 @@ import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestG
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import { pullRequestRefKey, usePullRequestDetail } from "./usePullRequestDetail";
 import { PullRequestActionsMenu } from "./PullRequestActionsMenu";
+import { PullRequestChecklistActions } from "./checklist/PullRequestChecklistActions";
 import {
   PullRequestApproveWorkflowsButton,
   PullRequestCheckoutMenu,
@@ -1479,6 +1480,12 @@ export function PullRequestDetailPanel({
                 pendingAction={pendingAction}
                 perform={perform}
                 resolveConflicts={resolveConflictsControl}
+              />
+              <PullRequestChecklistActions
+                environmentId={environmentId}
+                reference={reference}
+                detail={detail}
+                onActed={refreshDetail}
               />
               {checkoutControl}
               <PullRequestActionsMenu
