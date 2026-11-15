@@ -81,6 +81,10 @@ jobs:
           eval "$(grep -E '^T3CODE_(CLERK_PUBLISHABLE_KEY|CLERK_JWT_TEMPLATE|CLERK_CLI_OAUTH_CLIENT_ID|RELAY_URL)=' .env.example | sed 's/^/export /')"
           node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64 \
             --signed --build-version "${TAG#v}"
+          # An ad-hoc signature has no Authority, and the installed app refuses it as an update.
+          ditto -x -k release/*.zip "$RUNNER_TEMP/app"
+          codesign --verify --deep --strict "$RUNNER_TEMP"/app/*.app
+          codesign -dv "$RUNNER_TEMP"/app/*.app 2>&1 | grep -m1 "^Authority="
 
       - name: Publish the release
         env:
@@ -91,6 +95,7 @@ jobs:
             echo
             git log --format='- %s' refs/upstream-nightly..HEAD
           } > "$RUNNER_TEMP/notes.md"
-          gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+          # gh prefers the `upstream` remote, so name this repository.
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
             --title "T3 Code Nightly ${TAG#v} (fork)" --notes-file "$RUNNER_TEMP/notes.md" \
             release/*.dmg release/*.zip release/*.blockmap release/nightly-mac.yml
