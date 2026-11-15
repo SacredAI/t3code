@@ -68,18 +68,6 @@ jobs:
         with:
           toolchain: stable
 
-      # electron-builder bundles only Apple's expired WWDR intermediate. Apple Development
-      # certificates chain to G3, and without it the identity is invalid and signing is skipped.
-      - name: Install Apple's WWDR G3 intermediate
-        run: |
-          fingerprint=DCF21878C77F4198E4B4614F03D696D89C66C66008D4244E1B99161AAC91601F
-          if ! security find-certificate -a -Z /Library/Keychains/System.keychain | grep -q "$fingerprint"; then
-            cert="$RUNNER_TEMP/AppleWWDRCAG3.cer"
-            curl -fsSL -o "$cert" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
-            echo "$fingerprint  $cert" | shasum -a 256 -c
-            sudo security add-certificates -k /Library/Keychains/System.keychain "$cert"
-          fi
-
       - name: Build the signed macOS app
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -96,7 +84,7 @@ jobs:
           # An ad-hoc signature has no Authority, and the installed app refuses it as an update.
           ditto -x -k release/*.zip "$RUNNER_TEMP/app"
           codesign --verify --deep --strict "$RUNNER_TEMP"/app/*.app
-          codesign -dv "$RUNNER_TEMP"/app/*.app 2>&1 | grep -m1 "^Authority="
+          codesign -dvv "$RUNNER_TEMP"/app/*.app 2>&1 | grep -m1 "^Authority="
 
       - name: Publish the release
         env:
