@@ -11,6 +11,9 @@ import { useEnvironmentQuery } from "~/state/query";
 import { reviewEnvironment } from "~/state/review";
 import { waitForQuerySettled } from "~/state/waitForQuerySettled";
 
+// Looking for a selected commit loads at most this many unasked; more takes a click.
+const FIND_COMMIT_MAX_LIMIT = 1_000;
+
 export interface BranchCommitsTarget {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
@@ -28,8 +31,15 @@ function branchCommitsQuery(target: BranchCommitsTarget, limit: number) {
   });
 }
 
-/** The branch's newest commits, grown a page at a time. */
-export function useBranchCommits(target: BranchCommitsTarget | null, resolve: MessageResolver = m) {
+/**
+ * The branch's newest commits. Each load doubles the list, and the list grows by itself until it
+ * holds `include`, so a selected commit always has neighbours.
+ */
+export function useBranchCommits(
+  target: BranchCommitsTarget | null,
+  include: string | null,
+  resolve: MessageResolver = m,
+) {
   const registry = useContext(RegistryContext);
   const listKey = target
     ? JSON.stringify([target.environmentId, target.cwd, target.baseRef])
@@ -55,21 +65,32 @@ export function useBranchCommits(target: BranchCommitsTarget | null, resolve: Me
   }
   const shown = held?.listKey === listKey ? held : null;
   const pendingLimit = shown !== null && shown.limit !== limit ? limit : null;
-  // Servers without paging return one page whatever the limit, so a short page ends the list.
+  // A server without paging returns one page whatever the limit asks for.
+  const serverCannotPage =
+    shown !== null && shown.result.truncated && shown.result.commits.length < shown.limit;
   const canLoadMore =
     shown !== null &&
     shown.result.truncated &&
-    shown.result.commits.length >= shown.limit &&
+    !serverCannotPage &&
     shown.limit < REVIEW_BRANCH_COMMITS_MAX_LIMIT;
+  const nextLimit = (from: number) => Math.min(from * 2, REVIEW_BRANCH_COMMITS_MAX_LIMIT);
+
+  if (
+    listKey !== null &&
+    shown !== null &&
+    include !== null &&
+    canLoadMore &&
+    pendingLimit === null &&
+    shown.limit < FIND_COMMIT_MAX_LIMIT &&
+    !shown.result.commits.some((commit) => commit.sha === include)
+  ) {
+    setRequested({ listKey, limit: nextLimit(shown.limit) });
+  }
 
   /** Resolves with the longer list, or undefined when there is none. */
   const loadMore = (): Promise<ReviewBranchCommitsResult | undefined> => {
     if (!target || listKey === null || shown === null) return Promise.resolve(undefined);
-    const next =
-      pendingLimit ??
-      (canLoadMore
-        ? Math.min(shown.limit + REVIEW_BRANCH_COMMITS_PAGE_SIZE, REVIEW_BRANCH_COMMITS_MAX_LIMIT)
-        : null);
+    const next = pendingLimit ?? (canLoadMore ? nextLimit(shown.limit) : null);
     if (next === null) return Promise.resolve(undefined);
     if (next !== limit) setRequested({ listKey, limit: next });
     return waitForQuerySettled({
@@ -84,6 +105,7 @@ export function useBranchCommits(target: BranchCommitsTarget | null, resolve: Me
     commits: shown?.result ?? null,
     error: query.error,
     canLoadMore,
+    serverCannotPage,
     isLoadingMore: pendingLimit !== null && query.isPending,
     loadMore,
     onMenuOpenChange: (open: boolean) => {
