@@ -426,6 +426,8 @@ export default function DiffPanel({
       ? diffSelection.kind
       : "branch";
   const selectedCommitSha = diffSelection.kind === "commit" ? diffSelection.sha : null;
+  const selectedCommitFromSha =
+    diffSelection.kind === "commit" ? (diffSelection.fromSha ?? null) : null;
   const selectedBaseRef =
     diffSelection.kind === "branch" || diffSelection.kind === "commit"
       ? diffSelection.baseRef
@@ -444,7 +446,7 @@ export default function DiffPanel({
     : selectedTurn
       ? `turn:${selectedTurn.runId}`
       : selectedCommitSha !== null
-        ? `commit:${selectedCommitSha}`
+        ? `commit:${selectedCommitFromSha === null ? "" : `${selectedCommitFromSha}..`}${selectedCommitSha}`
         : selectedGitScope;
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
@@ -474,6 +476,7 @@ export default function DiffPanel({
           cwd: gitCwd,
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
           ...(selectedCommitSha !== null ? { commitSha: selectedCommitSha } : {}),
+          ...(selectedCommitFromSha !== null ? { fromCommitSha: selectedCommitFromSha } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
           metadataOnly: true,
           ...(selectedCommitSha === null
@@ -508,17 +511,27 @@ export default function DiffPanel({
     messages,
   );
   const branchCommits = branchCommitList.commits;
-  const selectedCommitIndex =
-    selectedCommitSha !== null && branchCommits
-      ? branchCommits.commits.findIndex((commit) => commit.sha === selectedCommitSha)
+  const branchCommitIndex = (sha: string | null) =>
+    sha !== null && branchCommits
+      ? branchCommits.commits.findIndex((commit) => commit.sha === sha)
       : -1;
+  const selectedCommitIndex = branchCommitIndex(selectedCommitSha);
+  const selectedRangeEndIndex =
+    selectedCommitFromSha === null ? selectedCommitIndex : branchCommitIndex(selectedCommitFromSha);
+  const selectedRangeCount =
+    selectedCommitFromSha !== null &&
+    selectedCommitIndex >= 0 &&
+    selectedRangeEndIndex > selectedCommitIndex
+      ? selectedRangeEndIndex - selectedCommitIndex + 1
+      : null;
+  const steppableCommitIndex = selectedCommitFromSha === null ? selectedCommitIndex : -1;
   const newerCommitSha =
-    selectedCommitIndex > 0 ? branchCommits?.commits[selectedCommitIndex - 1]?.sha : undefined;
+    steppableCommitIndex > 0 ? branchCommits?.commits[steppableCommitIndex - 1]?.sha : undefined;
   const olderCommitSha =
-    selectedCommitIndex >= 0 ? branchCommits?.commits[selectedCommitIndex + 1]?.sha : undefined;
+    steppableCommitIndex >= 0 ? branchCommits?.commits[steppableCommitIndex + 1]?.sha : undefined;
   const canStepToOlderCommit =
     olderCommitSha !== undefined ||
-    (selectedCommitIndex >= 0 && branchCommitList.canLoadMore && !branchCommitList.isLoadingMore);
+    (steppableCommitIndex >= 0 && branchCommitList.canLoadMore && !branchCommitList.isLoadingMore);
   const activeThreadRefreshKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
@@ -544,9 +557,16 @@ export default function DiffPanel({
     selectedCommitSha !== null && selectedGitSource?.headRef === selectedCommitSha
       ? selectedGitSource.commitSubject
       : undefined;
+  const selectedCommitRangeLabel =
+    selectedCommitFromSha === null
+      ? null
+      : selectedRangeCount !== null
+        ? `${selectedRangeCount} commits`
+        : "Commit range";
   const selectedGitScopeLabel =
     selectedCommitSha !== null
-      ? (selectedCommitSubject ?? gt("Commit {sha}", { sha: selectedCommitSha.slice(0, 7) }))
+      ? (selectedCommitRangeLabel ??
+        selectedCommitSubject ?? gt("Commit {sha}", { sha: selectedCommitSha.slice(0, 7) }))
       : selectedGitScope === "unstaged"
         ? gt("Uncommitted")
         : gt("Changes");
@@ -555,7 +575,7 @@ export default function DiffPanel({
     ? gt("Tool call")
     : selectedRunId === null
       ? selectedCommitSha !== null
-        ? (selectedCommitSubject ?? gt("Commit", { $context: "a git commit" }))
+        ? (selectedCommitRangeLabel ?? selectedCommitSubject ?? gt("Commit", { $context: "a git commit" }))
         : selectedGitScopeLabel
       : selectedTurn?.runId === latestTurn?.runId
         ? gt("Latest turn")
@@ -568,8 +588,7 @@ export default function DiffPanel({
   const headerCommitSha = selectedRunId === null ? selectedCommitSha : null;
   // The project's remote is the thread folder's; another repository's commits are not on it.
   const commitLinkIdentity = gitRepository === null ? activeProject?.repositoryIdentity : null;
-  const selectedCommitUrl =
-    headerCommitSha !== null ? projectCommitUrl(commitLinkIdentity, headerCommitSha) : null;
+  const headerCommitFromSha = selectedRunId === null ? selectedCommitFromSha : null;
   const openLink = useOpenLink(routeThreadRef);
   // A SHA link goes to the code host; it must not route back into this pane's commit selection.
   const openCommitUrl = (event: MouseEvent<HTMLElement>, url: string) => {
@@ -961,9 +980,9 @@ export default function DiffPanel({
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
   };
-  const selectCommit = (sha: string) => {
+  const selectCommit = (sha: string, fromSha?: string) => {
     if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectCommit(routeThreadRef, sha);
+    useDiffPanelStore.getState().selectCommit(routeThreadRef, sha, fromSha);
   };
   const stepToOlderCommit = async () => {
     if (!routeThreadRef || selectedCommitSha === null) return;
@@ -974,7 +993,7 @@ export default function DiffPanel({
       useDiffPanelStore.getState().byThreadKey,
       routeThreadRef,
     );
-    if (!loaded || current.kind !== "commit" || current.sha !== from) return;
+    if (!loaded || current.kind !== "commit" || current.sha !== from || current.fromSha) return;
     const index = loaded.commits.findIndex((commit) => commit.sha === from);
     const older = index >= 0 ? loaded.commits[index + 1] : undefined;
     if (older) selectCommit(older.sha);
@@ -993,7 +1012,10 @@ export default function DiffPanel({
     if (selectedGitScope === "unstaged") selectGitScope("unstaged");
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
-  const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
+  const selectedCommitValue =
+    selectedCommitSha !== null && selectedCommitFromSha === null
+      ? `commit:${selectedCommitSha}`
+      : "";
   const selectedScopeValue = toolCallSelection
     ? ""
     : selectedRunId === null
@@ -1029,6 +1051,43 @@ export default function DiffPanel({
   // Two pickers leave no room for these in a phone-width panel, where a split view cannot fit anyway.
   const narrowHeaderHidden =
     repositorySections.length > 0 ? "@max-[30rem]/diff-header:hidden" : undefined;
+
+  const selectCommitFromMenu = (value: string, event: Event) => {
+    const commits = branchCommits?.commits ?? [];
+    const index = branchCommitIndex(value.slice("commit:".length));
+    const newer = commits[Math.min(selectedCommitIndex, index)];
+    const older = commits[Math.max(selectedCommitIndex, index)];
+    const extend = "shiftKey" in event && event.shiftKey === true;
+    if (!extend || selectedCommitIndex < 0 || index < 0 || !newer || !older) {
+      selectScopeValue(value);
+      return;
+    }
+    selectCommit(newer.sha, older.sha);
+  };
+  const renderCommitSha = (sha: string) => {
+    const url = projectCommitUrl(commitLinkIdentity, sha);
+    return url ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 font-mono text-xs text-muted-foreground underline underline-offset-4"
+              onClick={(event) => openCommitUrl(event, url)}
+            />
+          }
+        >
+          {sha.slice(0, 7)}
+        </TooltipTrigger>
+        <TooltipPopup side="top">{url}</TooltipPopup>
+      </Tooltip>
+    ) : (
+      <span className="shrink-0 font-mono text-xs text-muted-foreground">{sha.slice(0, 7)}</span>
+    );
+  };
+
   const headerRow = (
     <>
       <div className="@container/diff-refs flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
@@ -1046,31 +1105,16 @@ export default function DiffPanel({
             <span className="truncate">{selectedScopeLabel}</span>
             <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
           </DropdownMenuTrigger>
-          {headerCommitSha !== null ? (
-            selectedCommitUrl ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <a
-                      href={selectedCommitUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shrink-0 font-mono text-xs text-muted-foreground underline underline-offset-4"
-                      onClick={(event) => openCommitUrl(event, selectedCommitUrl)}
-                    />
-                  }
-                >
-                  {headerCommitSha.slice(0, 7)}
-                </TooltipTrigger>
-                <TooltipPopup side="top">{selectedCommitUrl}</TooltipPopup>
-              </Tooltip>
-            ) : (
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                {headerCommitSha.slice(0, 7)}
-              </span>
-            )
+          {headerCommitSha !== null && headerCommitFromSha !== null ? (
+            <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+              {renderCommitSha(headerCommitFromSha)}
+              <span aria-hidden>–</span>
+              {renderCommitSha(headerCommitSha)}
+            </span>
+          ) : headerCommitSha !== null ? (
+            renderCommitSha(headerCommitSha)
           ) : null}
-          {headerCommitSha !== null ? (
+          {headerCommitSha !== null && headerCommitFromSha === null ? (
             <div className="-ms-2 flex shrink-0 items-center">
               <CommitStepButton
                 label="Older commit"
@@ -1150,16 +1194,21 @@ export default function DiffPanel({
                 <DropdownMenuSubContent className="max-h-80 max-w-96">
                   <DropdownMenuRadioGroup
                     value={selectedCommitValue}
-                    onValueChange={selectScopeValue}
+                    onValueChange={(value: string, eventDetails) =>
+                      selectCommitFromMenu(value, eventDetails.event)
+                    }
                   >
-                    {branchCommits?.commits.map((commit) => {
+                    {branchCommits?.commits.map((commit, index) => {
                       const commitUrl = projectCommitUrl(commitLinkIdentity, commit.sha);
                       return (
                         <div
                           key={commit.sha}
                           className={cn(
                             "flex items-center rounded-sm hover:bg-accent has-data-highlighted:bg-accent has-focus-visible:bg-accent [&_[data-checked]]:bg-transparent [&_[data-highlighted]]:bg-transparent",
-                            selectedCommitSha === commit.sha && "bg-foreground/[0.08]",
+                            selectedCommitIndex >= 0 &&
+                              index >= selectedCommitIndex &&
+                              index <= Math.max(selectedCommitIndex, selectedRangeEndIndex) &&
+                              "bg-foreground/[0.08]",
                           )}
                         >
                           <Tooltip>
@@ -1243,6 +1292,9 @@ export default function DiffPanel({
                         { count: branchCommits.commits.length },
                       )}
                     </DropdownMenuItem>
+                  ) : null}
+                  {canReadFiles && branchCommits && branchCommits.commits.length > 1 ? (
+                    <DropdownMenuItem disabled>Shift-click to select a range</DropdownMenuItem>
                   ) : null}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
