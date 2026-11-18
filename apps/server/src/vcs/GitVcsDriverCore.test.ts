@@ -3187,6 +3187,45 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("previews a commit range against its oldest commit's parent", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const base = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(cwd, "first.txt", "first\n");
+        yield* git(cwd, ["add", "first.txt"]);
+        yield* git(cwd, ["commit", "-m", "first"]);
+        const first = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(cwd, "README.md", "# range\n");
+        yield* git(cwd, ["commit", "-am", "last"]);
+        const last = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(cwd, "after.txt", "after\n");
+        yield* git(cwd, ["add", "after.txt"]);
+        yield* git(cwd, ["commit", "-m", "after the range"]);
+
+        const source = (yield* driver.getReviewDiffPreview({
+          cwd,
+          commitSha: last,
+          fromCommitSha: first,
+        })).sources[0]!;
+        assert.strictEqual(source.baseRef, base);
+        assert.strictEqual(source.headRef, last);
+        assert.deepStrictEqual(
+          source.files?.map((file) => file.path),
+          ["README.md", "first.txt"],
+        );
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "commit",
+            baseRef: source.baseRef,
+            headRef: source.headRef,
+          }),
+        );
+        assert.deepStrictEqual(contents, { oldContents: "# test\n", newContents: "# range\n" });
+      }),
+    );
+
     it.effect("loads repository-relative files from nested directories and aliases", () =>
       Effect.gen(function* () {
         const directory = yield* makeTmpDir();
