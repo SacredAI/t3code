@@ -561,12 +561,15 @@ export default function DiffPanel({
     selectedCommitFromSha === null
       ? null
       : selectedRangeCount !== null
-        ? `${selectedRangeCount} commits`
-        : "Commit range";
+        ? gt("{count, plural, one {{count} commit} other {{count} commits}}", {
+            count: selectedRangeCount,
+          })
+        : gt("Commit range");
   const selectedGitScopeLabel =
     selectedCommitSha !== null
       ? (selectedCommitRangeLabel ??
-        selectedCommitSubject ?? gt("Commit {sha}", { sha: selectedCommitSha.slice(0, 7) }))
+        selectedCommitSubject ??
+        gt("Commit {sha}", { sha: selectedCommitSha.slice(0, 7) }))
       : selectedGitScope === "unstaged"
         ? gt("Uncommitted")
         : gt("Changes");
@@ -575,7 +578,9 @@ export default function DiffPanel({
     ? gt("Tool call")
     : selectedRunId === null
       ? selectedCommitSha !== null
-        ? (selectedCommitRangeLabel ?? selectedCommitSubject ?? gt("Commit", { $context: "a git commit" }))
+        ? (selectedCommitRangeLabel ??
+          selectedCommitSubject ??
+          gt("Commit", { $context: "a git commit" }))
         : selectedGitScopeLabel
       : selectedTurn?.runId === latestTurn?.runId
         ? gt("Latest turn")
@@ -1117,14 +1122,14 @@ export default function DiffPanel({
           {headerCommitSha !== null && headerCommitFromSha === null ? (
             <div className="-ms-2 flex shrink-0 items-center">
               <CommitStepButton
-                label="Older commit"
+                label={gt("Older commit")}
                 disabled={!canStepToOlderCommit}
                 onClick={() => void stepToOlderCommit()}
               >
                 <ChevronLeftIcon />
               </CommitStepButton>
               <CommitStepButton
-                label="Newer commit"
+                label={gt("Newer commit")}
                 disabled={newerCommitSha === undefined}
                 onClick={() => {
                   if (newerCommitSha !== undefined) selectCommit(newerCommitSha);
@@ -1277,13 +1282,15 @@ export default function DiffPanel({
                       <T>No commits on this branch.</T>
                     </DropdownMenuItem>
                   ) : branchCommitList.isLoadingMore ? (
-                    <DropdownMenuItem disabled>Loading older commits...</DropdownMenuItem>
+                    <DropdownMenuItem disabled>
+                      <T>Loading older commits...</T>
+                    </DropdownMenuItem>
                   ) : branchCommitList.canLoadMore ? (
                     <DropdownMenuItem
                       closeOnClick={false}
                       onClick={() => void branchCommitList.loadMore()}
                     >
-                      Load older commits
+                      <T>Load older commits</T>
                     </DropdownMenuItem>
                   ) : branchCommits.truncated ? (
                     <DropdownMenuItem disabled>
@@ -1294,7 +1301,9 @@ export default function DiffPanel({
                     </DropdownMenuItem>
                   ) : null}
                   {canReadFiles && branchCommits && branchCommits.commits.length > 1 ? (
-                    <DropdownMenuItem disabled>Shift-click to select a range</DropdownMenuItem>
+                    <DropdownMenuItem disabled>
+                      <T>Shift-click to select a range</T>
+                    </DropdownMenuItem>
                   ) : null}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
