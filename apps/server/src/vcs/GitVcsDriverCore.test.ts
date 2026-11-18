@@ -3071,7 +3071,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("lists the branch's commits newest first, at most 100, and flags the rest", () =>
+    it.effect("lists the branch's commits newest first, up to the limit, and flags the rest", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -3102,6 +3102,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           [result.commits[0]?.subject, result.commits[99]?.subject],
           ["feature 101", "feature 2"],
         );
+
+        const all = yield* driver.getReviewBranchCommits({
+          cwd,
+          baseRef: initialBranch,
+          limit: 102,
+        });
+        assert.strictEqual(all.truncated, false);
+        assert.strictEqual(all.commits.length, 102);
+        assert.strictEqual(all.commits[101]?.subject, "feature 0");
       }),
     );
 
