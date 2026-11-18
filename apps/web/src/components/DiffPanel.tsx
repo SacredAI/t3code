@@ -508,6 +508,7 @@ export default function DiffPanel({
     visible && isGitRepo && canReadFiles && activeThread && gitCwd
       ? { environmentId: activeThread.environmentId, cwd: gitCwd, baseRef: rememberedBaseRef }
       : null,
+    selectedCommitFromSha ?? selectedCommitSha,
     messages,
   );
   const branchCommits = branchCommitList.commits;
@@ -536,7 +537,7 @@ export default function DiffPanel({
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
 
-  const selectedGitSource = branchDiffPreview.data?.sources.find(
+  const matchedGitSource = branchDiffPreview.data?.sources.find(
     (source) =>
       source.kind ===
       (selectedGitScope === "unstaged"
@@ -545,6 +546,12 @@ export default function DiffPanel({
           ? "commit"
           : "branch-range"),
   );
+  // A server without ranges answers a range with its newest commit alone.
+  const commitRangeUnsupported =
+    selectedCommitFromSha !== null &&
+    matchedGitSource !== undefined &&
+    matchedGitSource.id !== `${selectedCommitFromSha}..${selectedCommitSha}`;
+  const selectedGitSource = commitRangeUnsupported ? undefined : matchedGitSource;
   const comparisonHeadRef =
     selectedGitSource?.headRef ??
     (gitRepository === null ? gitStatusQuery.data?.refName : null) ??
@@ -653,7 +660,9 @@ export default function DiffPanel({
     ? toolCallDetail.error
     : selectedTurn
       ? activeCheckpointDiff.error
-      : branchDiffPreview.error;
+      : commitRangeUnsupported
+        ? gt("Update T3 Code on the machine running this project to review commit ranges.")
+        : branchDiffPreview.error;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges =
     hasResolvedPatch &&
@@ -1291,6 +1300,12 @@ export default function DiffPanel({
                       onClick={() => void branchCommitList.loadMore()}
                     >
                       <T>Load older commits</T>
+                    </DropdownMenuItem>
+                  ) : branchCommitList.serverCannotPage ? (
+                    <DropdownMenuItem disabled>
+                      <T>
+                        Update T3 Code on the machine running this project to load older commits.
+                      </T>
                     </DropdownMenuItem>
                   ) : branchCommits.truncated ? (
                     <DropdownMenuItem disabled>
