@@ -23,6 +23,8 @@ export const ReviewDiffPreviewInput = Schema.Struct({
   // A branch-range file read reuses its preview's merge base instead of resolving it again.
   mergeBase: Schema.optionalKey(ReviewMergeBase),
   commitSha: Schema.optional(TrimmedNonEmptyString),
+  // Oldest commit of a range that ends at commitSha; the diff includes it.
+  fromCommitSha: Schema.optionalKey(TrimmedNonEmptyString),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
   sourceKind: Schema.optionalKey(Schema.Literals(["working-tree", "branch-range"])),
   trackedOnly: Schema.optionalKey(Schema.Boolean),

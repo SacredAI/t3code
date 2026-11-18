@@ -4820,7 +4820,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         return yield* reviewCommitError(cwd, "Selected commit request is invalid.");
       }
       const commit = yield* resolveReviewCommit(cwd, input.commitSha);
-      const { subject } = yield* readReviewCommitMessage(cwd, commit.sha);
+      const first =
+        input.fromCommitSha === undefined
+          ? commit
+          : yield* resolveReviewCommit(cwd, input.fromCommitSha);
+      const isRange = first.sha !== commit.sha;
+      const subject = isRange ? "" : (yield* readReviewCommitMessage(cwd, commit.sha)).subject;
       const diffArgs = [
         ...REVIEW_DIFF_ARGS,
         ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
@@ -4828,7 +4833,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const stat = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.commitStat",
         cwd,
-        [...diffArgs, "--raw", "--numstat", "-z", commit.parent, commit.sha, "--", ...pathArgs],
+        [...diffArgs, "--raw", "--numstat", "-z", first.parent, commit.sha, "--", ...pathArgs],
         { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
       );
       const files = parseReviewNumstat(stat.stdout);
@@ -4838,7 +4843,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : yield* executeGit(
               "GitVcsDriver.getReviewDiffPreview.commitPatch",
               cwd,
-              [...diffArgs, "--patch", commit.parent, commit.sha, "--", ...pathArgs],
+              [...diffArgs, "--patch", first.parent, commit.sha, "--", ...pathArgs],
               { maxOutputBytes: patchLimit, appendTruncationMarker: true },
             );
       const diffHash = yield* hashDiff(patch.stdout, files);
@@ -4847,11 +4852,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         generatedAt: yield* DateTime.now,
         sources: [
           {
-            id: commit.sha,
+            id: isRange ? `${first.sha}..${commit.sha}` : commit.sha,
             kind: "commit" as const,
-            title: `Commit ${commit.sha.slice(0, 7)}`,
+            title: isRange
+              ? `Commits ${first.sha.slice(0, 7)}..${commit.sha.slice(0, 7)}`
+              : `Commit ${commit.sha.slice(0, 7)}`,
             ...(subject.trim() ? { commitSubject: subject.trim() } : {}),
-            baseRef: commit.parent,
+            baseRef: first.parent,
             headRef: commit.sha,
             diff: patch.stdout,
             files,
@@ -5196,17 +5203,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         return yield* reviewDiffFileError(input, "Selected commit is no longer available.");
       }
       const commit = yield* resolveReviewCommit(input.cwd, input.headRef);
-      if (input.baseRef !== commit.parent) {
-        return yield* reviewDiffFileError(
-          input,
-          "Selected commit changed. Refresh the comparison.",
-        );
-      }
+      // A commit range starts below the head commit's parent.
+      const baseRef = input.baseRef ?? commit.parent;
       const [oldContents, newContents] = yield* Effect.all(
         [
           input.changeType === "new"
             ? Effect.succeed("")
-            : readReviewFileAtRevision(input, commit.parent, input.oldPath),
+            : readReviewFileAtRevision(input, baseRef, input.oldPath),
           input.changeType === "deleted"
             ? Effect.succeed("")
             : readReviewFileAtRevision(input, commit.sha, input.newPath),

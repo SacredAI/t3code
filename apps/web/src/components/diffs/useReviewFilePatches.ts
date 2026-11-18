@@ -200,7 +200,14 @@ function reviewFileQueries({
                 request: {
                   cwd,
                   ...(baseRef ? { baseRef } : {}),
-                  ...(source.kind === "commit" ? { commitSha: source.id } : {}),
+                  ...(source.kind === "commit" && previewInput?.commitSha
+                    ? {
+                        commitSha: previewInput.commitSha,
+                        ...(previewInput.fromCommitSha
+                          ? { fromCommitSha: previewInput.fromCommitSha }
+                          : {}),
+                      }
+                    : {}),
                   ...(source.mergeBase ? { mergeBase: source.mergeBase } : {}),
                   ignoreWhitespace,
                   file: {
