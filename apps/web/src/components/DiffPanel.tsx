@@ -22,12 +22,13 @@ import {
   PilcrowIcon,
   Rows3Icon,
   TextWrapIcon,
+  ChevronLeftIcon,
   ChevronRightIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useCodeViewScrollRestore } from "./diffs/useCodeViewScrollRestore";
 import { useFilesystemReadAccess } from "~/state/filesystem";
@@ -221,6 +222,37 @@ function DiffFileHeaderSuffix({
         <DiffFileStatus error={error} truncated={truncated} retry={() => onRetry(filePath)} />
       ) : null}
     </>
+  );
+}
+
+function CommitStepButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={label}
+            disabled={disabled}
+            onClick={onClick}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -476,6 +508,17 @@ export default function DiffPanel({
     messages,
   );
   const branchCommits = branchCommitList.commits;
+  const selectedCommitIndex =
+    selectedCommitSha !== null && branchCommits
+      ? branchCommits.commits.findIndex((commit) => commit.sha === selectedCommitSha)
+      : -1;
+  const newerCommitSha =
+    selectedCommitIndex > 0 ? branchCommits?.commits[selectedCommitIndex - 1]?.sha : undefined;
+  const olderCommitSha =
+    selectedCommitIndex >= 0 ? branchCommits?.commits[selectedCommitIndex + 1]?.sha : undefined;
+  const canStepToOlderCommit =
+    olderCommitSha !== undefined ||
+    (selectedCommitIndex >= 0 && branchCommitList.canLoadMore && !branchCommitList.isLoadingMore);
   const activeThreadRefreshKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
@@ -918,6 +961,24 @@ export default function DiffPanel({
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
   };
+  const selectCommit = (sha: string) => {
+    if (!routeThreadRef) return;
+    useDiffPanelStore.getState().selectCommit(routeThreadRef, sha);
+  };
+  const stepToOlderCommit = async () => {
+    if (!routeThreadRef || selectedCommitSha === null) return;
+    if (olderCommitSha !== undefined) return selectCommit(olderCommitSha);
+    const from = selectedCommitSha;
+    const loaded = await branchCommitList.loadMore();
+    const current = selectThreadDiffPanelSelection(
+      useDiffPanelStore.getState().byThreadKey,
+      routeThreadRef,
+    );
+    if (!loaded || current.kind !== "commit" || current.sha !== from) return;
+    const index = loaded.commits.findIndex((commit) => commit.sha === from);
+    const older = index >= 0 ? loaded.commits[index + 1] : undefined;
+    if (older) selectCommit(older.sha);
+  };
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
@@ -956,9 +1017,7 @@ export default function DiffPanel({
     } else if (value === selectedCommitValue) {
       selectGitScope("branch");
     } else if (value.startsWith("commit:")) {
-      if (routeThreadRef) {
-        useDiffPanelStore.getState().selectCommit(routeThreadRef, value.slice("commit:".length));
-      }
+      selectCommit(value.slice("commit:".length));
     } else if (value === "latest") {
       if (latestTurn) selectTurn(latestTurn.runId);
     } else {
@@ -1010,6 +1069,26 @@ export default function DiffPanel({
                 {headerCommitSha.slice(0, 7)}
               </span>
             )
+          ) : null}
+          {headerCommitSha !== null ? (
+            <div className="-ms-2 flex shrink-0 items-center">
+              <CommitStepButton
+                label="Older commit"
+                disabled={!canStepToOlderCommit}
+                onClick={() => void stepToOlderCommit()}
+              >
+                <ChevronLeftIcon />
+              </CommitStepButton>
+              <CommitStepButton
+                label="Newer commit"
+                disabled={newerCommitSha === undefined}
+                onClick={() => {
+                  if (newerCommitSha !== undefined) selectCommit(newerCommitSha);
+                }}
+              >
+                <ChevronRightIcon />
+              </CommitStepButton>
+            </div>
           ) : null}
           <DropdownMenuContent align="start">
             <DropdownMenuRadioGroup value={selectedScopeValue} onValueChange={selectScopeValue}>
