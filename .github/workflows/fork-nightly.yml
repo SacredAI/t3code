@@ -102,17 +102,27 @@ jobs:
           codesign --verify --deep --strict "$RUNNER_TEMP"/app/*.app
           codesign -dvv "$RUNNER_TEMP"/app/*.app 2>&1 | grep -m1 "^Authority="
 
-      - name: Build the Linux app
+      # Linux machines run the t3 CLI server, which installs this archive and updates from it.
+      - name: Build the Linux CLI archive
         if: matrix.platform == 'linux'
         run: |
-          # The libraries upstream's Linux desktop release installs.
+          set -euo pipefail
+          version="${TAG#v}"
+          # The archive ships libatomic.so.1 and points t3's RUNPATH at it.
           sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev pkg-config libgtk-3-0t64 libnss3 libasound2t64 \
-            libgbm1 imagemagick patchelf
+          sudo apt-get install -y patchelf
           eval "$(grep -E '^T3CODE_(CLERK_PUBLISHABLE_KEY|CLERK_JWT_TEMPLATE|CLERK_CLI_OAUTH_CLIENT_ID|RELAY_URL)=' .env.example | sed 's/^/export /')"
-          node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64 \
-            --build-version "${TAG#v}"
-          ls -la release
+          node scripts/update-release-package-versions.ts "$version"
+          vp run --filter t3 build
+          node apps/server/scripts/cli.ts build-exe --verbose
+          cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml \
+            --target x86_64-unknown-linux-gnu
+          mkdir -p "$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor \
+            "$RUNNER_TEMP/cli-resource-monitor/linux-x64/"
+          node scripts/build-cli-archive.ts --platform linux --arch x64 --version "$version" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" --output-dir release
+          node scripts/smoke-cli-archive.ts --archive release/t3-*.tar.gz --expect-version "$version"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -122,10 +132,9 @@ jobs:
           path: |
             release/*.dmg
             release/*.zip
-            release/*.AppImage
-            release/*.deb
             release/*.blockmap
             release/nightly-*.yml
+            release/t3-*.tar.gz
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: matrix.platform == 'mac'
@@ -164,6 +173,8 @@ jobs:
             echo
             cat notes/fork-commits.md
           } > "$RUNNER_TEMP/notes.md"
+          # The CLI installer verifies its archive against this file.
+          (cd release && sha256sum t3-*.tar.gz > SHA256SUMS && cat SHA256SUMS)
           # A rebuild replaces the release, so its tag must point at this run's commit.
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
