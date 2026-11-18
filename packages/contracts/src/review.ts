@@ -41,9 +41,16 @@ export const ReviewDiffPreviewInput = Schema.Struct({
 });
 export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;
 
+export const REVIEW_BRANCH_COMMITS_PAGE_SIZE = 100;
+export const REVIEW_BRANCH_COMMITS_MAX_LIMIT = 10_000;
+
 export const ReviewBranchCommitsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   baseRef: Schema.optional(GitRefName),
+  // Newest commits to list; defaults to one page.
+  limit: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: REVIEW_BRANCH_COMMITS_MAX_LIMIT })),
+  ),
 });
 export type ReviewBranchCommitsInput = typeof ReviewBranchCommitsInput.Type;
 

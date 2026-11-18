@@ -28,6 +28,7 @@ import {
   GitCommandError,
   type GitCommandFailureReason,
   T3_PROJECT_FILE_NAME,
+  REVIEW_BRANCH_COMMITS_PAGE_SIZE,
   type ReviewBranchCommitsInput,
   type ReviewDiffChangeType,
   type ReviewDiffFileContentsInput,
@@ -102,9 +103,8 @@ const UNTRACKED_TOTALS_RETRY_MAX_MS = 30 * 60_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 // Git's ident clean step (convert.c ident_to_git): `$Id:` up to the next `$` on the same line.
 const GIT_IDENT_KEYWORD = /\$Id:[^$\n]*\$/g;
-const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
-const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
+const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES_PER_PAGE = 128 * 1024;
 // Client patch parsers require a/ and b/ prefixes; override user diff prefix settings.
 export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
 // Client patch parsers drop blank context lines under diff.suppressBlankEmpty and summaries under diff.submodule.
@@ -4644,6 +4644,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const getReviewBranchCommits = Effect.fn("getReviewBranchCommits")(function* (
     input: ReviewBranchCommitsInput,
   ) {
+    const limit = input.limit ?? REVIEW_BRANCH_COMMITS_PAGE_SIZE;
     const repository = yield* resolveReviewRepository(input.cwd, true);
     if (!repository?.worktreeRoot) return { commits: [], truncated: false };
     const cwd = repository.worktreeRoot;
@@ -4673,11 +4674,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "--no-notes",
         "--no-show-signature",
         "--format=%H%x00%s%x00%cI",
-        `--max-count=${REVIEW_BRANCH_COMMIT_LIMIT + 1}`,
+        `--max-count=${limit + 1}`,
         `${mergeBase}..HEAD`,
       ],
       {
-        maxOutputBytes: REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES,
+        maxOutputBytes:
+          Math.ceil(limit / REVIEW_BRANCH_COMMITS_PAGE_SIZE) *
+          REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES_PER_PAGE,
         appendTruncationMarker: true,
       },
     );
@@ -4687,11 +4690,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const fields = result.stdout.split("\0");
     const completeFieldCount = fields.length - 1;
     const commits: Array<{ sha: string; subject: string; committedAt: string }> = [];
-    for (
-      let index = 0;
-      index + 2 < completeFieldCount && commits.length <= REVIEW_BRANCH_COMMIT_LIMIT;
-      index += 3
-    ) {
+    for (let index = 0; index + 2 < completeFieldCount && commits.length <= limit; index += 3) {
       const sha = fields[index];
       const subject = fields[index + 1];
       const committedAt = fields[index + 2];
@@ -4709,8 +4708,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return yield* reviewCommitError(cwd, "Branch commit metadata exceeds the response limit.");
     }
     return {
-      commits: commits.slice(0, REVIEW_BRANCH_COMMIT_LIMIT),
-      truncated: result.stdoutTruncated || commits.length > REVIEW_BRANCH_COMMIT_LIMIT,
+      commits: commits.slice(0, limit),
+      truncated: result.stdoutTruncated || commits.length > limit,
     };
   });
 

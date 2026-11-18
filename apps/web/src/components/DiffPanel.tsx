@@ -9,7 +9,6 @@ import {
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   CHECKPOINT_DIFF_TRUNCATED_MARKER,
-  type ReviewBranchCommitsResult,
   type ScopedThreadRef,
   type RunId,
 } from "@t3tools/contracts";
@@ -116,6 +115,7 @@ import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 
 import { observeIntersection } from "~/lib/observeIntersection";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
+import { useBranchCommits } from "./diffs/useBranchCommits";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
@@ -259,8 +259,6 @@ export default function DiffPanel({
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
   const [baseRefQuery, setBaseRefQuery] = useState("");
-  // The open commit menu keeps the list it opened with, so rows do not move under the pointer.
-  const [openCommitMenu, setOpenCommitMenu] = useState<ReviewBranchCommitsResult | null>(null);
 
   const routeThreadRef = useThreadRouteRef();
   const activeThreadId = routeThreadRef?.threadId ?? null;
@@ -471,19 +469,13 @@ export default function DiffPanel({
       : null;
   const branchDiffPreview = useEnvironmentQuery(branchDiffPreviewAtom, messages);
   const branchDiffPreviewIsPending = useEnvironmentQueryRefresh(branchDiffPreviewAtom).isPending;
-  const branchCommitsQuery = useEnvironmentQuery(
+  const branchCommitList = useBranchCommits(
     visible && isGitRepo && canReadFiles && activeThread && gitCwd
-      ? reviewEnvironment.branchCommits({
-          environmentId: activeThread.environmentId,
-          input: {
-            cwd: gitCwd,
-            ...(rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
-          },
-        })
+      ? { environmentId: activeThread.environmentId, cwd: gitCwd, baseRef: rememberedBaseRef }
       : null,
     messages,
   );
-  const branchCommits = openCommitMenu ?? branchCommitsQuery.data;
+  const branchCommits = branchCommitList.commits;
   const activeThreadRefreshKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
@@ -1072,14 +1064,7 @@ export default function DiffPanel({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             {turnDiffsOnly ? null : (
-              <DropdownMenuSub
-                onOpenChange={(open) => {
-                  setOpenCommitMenu(open ? (branchCommitsQuery.data ?? null) : null);
-                  if (!open) return;
-                  // The menu keeps the list it opened with; the refreshed one shows next time.
-                  branchCommitsQuery.refresh();
-                }}
-              >
+              <DropdownMenuSub onOpenChange={branchCommitList.onMenuOpenChange}>
                 <DropdownMenuSubTrigger>
                   <T>Commits</T>
                 </DropdownMenuSubTrigger>
@@ -1147,8 +1132,8 @@ export default function DiffPanel({
                       );
                     })}
                   </DropdownMenuRadioGroup>
-                  {branchCommitsQuery.error ? (
-                    <DropdownMenuItem disabled>{branchCommitsQuery.error}</DropdownMenuItem>
+                  {branchCommitList.error ? (
+                    <DropdownMenuItem disabled>{branchCommitList.error}</DropdownMenuItem>
                   ) : !canReadFiles ? (
                     <DropdownMenuItem disabled>
                       {fileAccess.isPending
@@ -1162,6 +1147,15 @@ export default function DiffPanel({
                   ) : branchCommits.commits.length === 0 ? (
                     <DropdownMenuItem disabled>
                       <T>No commits on this branch.</T>
+                    </DropdownMenuItem>
+                  ) : branchCommitList.isLoadingMore ? (
+                    <DropdownMenuItem disabled>Loading older commits...</DropdownMenuItem>
+                  ) : branchCommitList.canLoadMore ? (
+                    <DropdownMenuItem
+                      closeOnClick={false}
+                      onClick={() => void branchCommitList.loadMore()}
+                    >
+                      Load older commits
                     </DropdownMenuItem>
                   ) : branchCommits.truncated ? (
                     <DropdownMenuItem disabled>
