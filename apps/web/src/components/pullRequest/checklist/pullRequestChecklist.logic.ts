@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+
 /** Head branches that deploy, so the checklist never arms auto-merge on them. */
 const PROTECTED_HEAD_BRANCHES = new Set(["develop", "demo", "rc", "master"]);
 
@@ -5,11 +7,19 @@ export const CHECKLIST_RISKS = ["Low", "Medium", "High", "Very High"] as const;
 export type ChecklistRisk = (typeof CHECKLIST_RISKS)[number];
 
 export const MERGE_CHOICES = [
-  { label: "Merge", detail: "Adds the merge label", labels: ["merge"] },
-  { label: "Queue", detail: "Adds the queue label", labels: ["queue"] },
   {
-    label: "Queue as urgent",
-    detail: "Adds the queue and urgent labels",
+    label: msg("Merge", { $context: "verb, merge a pull request" }),
+    detail: msg("Adds the merge label"),
+    labels: ["merge"],
+  },
+  {
+    label: msg("Queue", { $context: "verb, add a pull request to the merge queue" }),
+    detail: msg("Adds the queue label"),
+    labels: ["queue"],
+  },
+  {
+    label: msg("Queue as urgent"),
+    detail: msg("Adds the queue and urgent labels"),
     labels: ["queue", "urgent"],
   },
 ] as const;

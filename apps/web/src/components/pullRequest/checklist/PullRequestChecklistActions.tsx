@@ -4,10 +4,11 @@ import {
   type AtomCommandResult,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, ListChecksIcon } from "lucide-react";
 import { useState } from "react";
 
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../../ui/button";
@@ -31,8 +32,7 @@ interface Step {
   readonly run: () => Promise<AtomCommandResult<unknown, unknown>>;
 }
 
-const CHECKLIST = "PR checklist";
-const APPROVE = "Approve & merge";
+type Flow = "checklist" | "approve";
 
 /** The `pr-checklist` and `merge-pr` workflows as header buttons. */
 export function PullRequestChecklistActions({
@@ -53,7 +53,10 @@ export function PullRequestChecklistActions({
   const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
     reportFailure: false,
   });
-  const [running, setRunning] = useState<string | null>(null);
+  const [running, setRunning] = useState<Flow | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
+  const flowName = { checklist: gt("PR checklist"), approve: gt("Approve & merge") };
 
   if (detail.state !== "open") return null;
   const isAuthor = detail.viewer === undefined || detail.author?.login === detail.viewer;
@@ -66,7 +69,7 @@ export function PullRequestChecklistActions({
       ? []
       : [
           {
-            label: "Update the description",
+            label: gt("Update the description"),
             run: () => update({ environmentId, input: { ...reference, body } }),
           },
         ];
@@ -76,7 +79,10 @@ export function PullRequestChecklistActions({
       ? []
       : [
           {
-            label: `Add the ${missing.join(" and ")} label${missing.length === 1 ? "" : "s"}`,
+            label: gt(
+              "{count, plural, =1 {Add the {labels} label} other {Add the {labels} labels}}",
+              { count: missing.length, labels: missing.join(", ") },
+            ),
             run: () =>
               setLabels({ environmentId, input: { ...reference, labels: missing, applied: true } }),
           },
@@ -87,7 +93,7 @@ export function PullRequestChecklistActions({
       ? []
       : [
           {
-            label: "Enable rebase auto-merge",
+            label: gt("Enable rebase auto-merge"),
             run: () =>
               runAction({
                 environmentId,
@@ -96,8 +102,8 @@ export function PullRequestChecklistActions({
           },
         ];
 
-  const runSteps = async (title: string, steps: ReadonlyArray<Step>): Promise<boolean> => {
-    setRunning(title);
+  const runSteps = async (flow: Flow, steps: ReadonlyArray<Step>): Promise<boolean> => {
+    setRunning(flow);
     for (const step of steps) {
       const result = await step.run();
       if (result._tag === "Failure") {
@@ -105,10 +111,10 @@ export function PullRequestChecklistActions({
         onActed();
         toastManager.add({
           type: "error",
-          title: `${title} stopped at: ${step.label}`,
+          title: gt("{flow} stopped at: {step}", { flow: flowName[flow], step: step.label }),
           description: readableFailure(
             squashAtomCommandFailure(result),
-            "The host refused it. The steps before it are done. Run it again to finish.",
+            gt("The host refused it. The steps before it are done. Run it again to finish."),
           ),
         });
         return false;
@@ -122,14 +128,16 @@ export function PullRequestChecklistActions({
   const runChecklist = async (risk: ChecklistRisk | null) => {
     // Copy before the first await: browsers allow clipboard writes only close to the click.
     const link = `rfr - ${detail.url}`;
-    const copied = await writeTextToClipboard(link, "review link").catch(() => false);
-    const done = await runSteps(CHECKLIST, [
+    const copied = await writeTextToClipboard(link, namedClipboardTarget("review link")).catch(
+      () => false,
+    );
+    const done = await runSteps("checklist", [
       ...editBody(completeRequesterChecklist(detail.body, { headBranch: detail.headBranch, risk })),
       ...addLabels(["merge", "skip-strict"]),
       ...(detail.isDraft
         ? [
             {
-              label: "Mark ready for review",
+              label: gt("Mark ready for review"),
               run: () => runAction({ environmentId, input: { ...reference, action: "ready" } }),
             },
           ]
@@ -139,8 +147,10 @@ export function PullRequestChecklistActions({
     if (done) {
       toastManager.add({
         type: "success",
-        title: "PR checklist done",
-        description: copied ? `Copied "${link}"` : "Could not copy the review link.",
+        title: gt("PR checklist done"),
+        description: copied
+          ? gt('Copied "{link}"', { link })
+          : gt("Could not copy the review link."),
       });
     }
   };
@@ -152,13 +162,13 @@ export function PullRequestChecklistActions({
         (entry) =>
           entry.actor?.login === detail.viewer && entry.outcome === "approved" && !entry.stale,
       );
-    const done = await runSteps(APPROVE, [
+    const done = await runSteps("approve", [
       ...editBody(completeReviewerChecklist(detail.body)),
       ...(approved
         ? []
         : [
             {
-              label: "Approve",
+              label: gt("Approve", { $context: "verb, approve a pull request" }),
               run: () =>
                 submitReview({
                   environmentId,
@@ -169,10 +179,16 @@ export function PullRequestChecklistActions({
       ...enableRebaseAutoMerge,
       ...addLabels(choice.labels),
     ]);
-    if (done) toastManager.add({ type: "success", title: `Approved: ${choice.label}` });
+    if (done) {
+      toastManager.add({
+        type: "success",
+        title: gt("Approved: {choice}", { choice: messages(choice.label) }),
+      });
+    }
   };
 
-  const checklistLabel = running === CHECKLIST ? "Running checklist..." : CHECKLIST;
+  const checklistLabel = running === "checklist" ? gt("Running checklist...") : flowName.checklist;
+  const approveLabel = running === "approve" ? gt("Approving...") : flowName.approve;
   const checklistContent = (
     <>
       <ListChecksIcon aria-hidden className="size-3.5" />
@@ -195,13 +211,17 @@ export function PullRequestChecklistActions({
           />
           <MenuPopup align="end" side="bottom">
             <MenuGroup>
-              <MenuGroupLabel>Final assessed risk</MenuGroupLabel>
+              <MenuGroupLabel>
+                <T>Final assessed risk</T>
+              </MenuGroupLabel>
               {CHECKLIST_RISKS.map((risk) => (
                 <MenuItem key={risk} onClick={() => void runChecklist(risk)}>
                   {risk}
                 </MenuItem>
               ))}
-              <MenuItem onClick={() => void runChecklist(null)}>Keep as is</MenuItem>
+              <MenuItem onClick={() => void runChecklist(null)}>
+                <T>Keep as is</T>
+              </MenuItem>
             </MenuGroup>
           </MenuPopup>
         </Menu>
@@ -221,15 +241,9 @@ export function PullRequestChecklistActions({
           <MenuTrigger
             disabled={disabled}
             render={
-              <Button
-                size="xs"
-                variant="outline"
-                aria-label={running === APPROVE ? "Approving..." : APPROVE}
-              >
+              <Button size="xs" variant="outline" aria-label={approveLabel}>
                 <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                <span className="@max-[35rem]/pr-header:hidden">
-                  {running === APPROVE ? "Approving..." : APPROVE}
-                </span>
+                <span className="@max-[35rem]/pr-header:hidden">{approveLabel}</span>
                 <ChevronDownIcon aria-hidden className="size-3.5 text-muted-foreground" />
               </Button>
             }
@@ -238,8 +252,8 @@ export function PullRequestChecklistActions({
             {MERGE_CHOICES.map((choice) => (
               <MenuItem key={choice.label} onClick={() => void approveAndMerge(choice)}>
                 <span className="flex min-w-0 flex-col">
-                  <span>{choice.label}</span>
-                  <span className="text-xs text-muted-foreground">{choice.detail}</span>
+                  <span>{messages(choice.label)}</span>
+                  <span className="text-xs text-muted-foreground">{messages(choice.detail)}</span>
                 </span>
               </MenuItem>
             ))}

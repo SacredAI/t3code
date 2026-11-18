@@ -6,6 +6,7 @@ import {
   type ReviewBranchCommitsResult,
 } from "@t3tools/contracts";
 import { useContext, useState } from "react";
+import { type MessageResolver, m } from "~/i18n/messages";
 import { useEnvironmentQuery } from "~/state/query";
 import { reviewEnvironment } from "~/state/review";
 import { waitForQuerySettled } from "~/state/waitForQuerySettled";
@@ -28,14 +29,14 @@ function branchCommitsQuery(target: BranchCommitsTarget, limit: number) {
 }
 
 /** The branch's newest commits, grown a page at a time. */
-export function useBranchCommits(target: BranchCommitsTarget | null) {
+export function useBranchCommits(target: BranchCommitsTarget | null, resolve: MessageResolver = m) {
   const registry = useContext(RegistryContext);
   const listKey = target
     ? JSON.stringify([target.environmentId, target.cwd, target.baseRef])
     : null;
   const [requested, setRequested] = useState({ listKey, limit: REVIEW_BRANCH_COMMITS_PAGE_SIZE });
   const limit = requested.listKey === listKey ? requested.limit : REVIEW_BRANCH_COMMITS_PAGE_SIZE;
-  const query = useEnvironmentQuery(target ? branchCommitsQuery(target, limit) : null);
+  const query = useEnvironmentQuery(target ? branchCommitsQuery(target, limit) : null, resolve);
   const [menuOpen, setMenuOpen] = useState(false);
   // Shows the last list while a larger one loads. An open menu keeps the list it opened with, so
   // rows do not move under the pointer, but still takes the older commits it asked for.
