@@ -102,25 +102,32 @@ jobs:
           codesign --verify --deep --strict "$RUNNER_TEMP"/app/*.app
           codesign -dvv "$RUNNER_TEMP"/app/*.app 2>&1 | grep -m1 "^Authority="
 
-      # Linux machines run the t3 CLI server, which installs this archive and updates from it.
-      - name: Build the Linux CLI archive
-        if: matrix.platform == 'linux'
+      # Machines that run the t3 CLI server install this archive and update from it.
+      - name: Build the CLI archive
+        env:
+          PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
           version="${TAG#v}"
-          # The archive ships libatomic.so.1 and points t3's RUNPATH at it.
-          sudo apt-get update
-          sudo apt-get install -y patchelf
+          if [ "$PLATFORM" = linux ]; then
+            arch=x64 key=linux-x64 rust_target=x86_64-unknown-linux-gnu
+            # The archive ships libatomic.so.1 and points t3's RUNPATH at it.
+            sudo apt-get update
+            sudo apt-get install -y patchelf
+          else
+            # Without a Developer ID identity the binary is signed ad hoc, which t3's own installer accepts.
+            arch=arm64 key=darwin-arm64 rust_target=aarch64-apple-darwin
+          fi
           eval "$(grep -E '^T3CODE_(CLERK_PUBLISHABLE_KEY|CLERK_JWT_TEMPLATE|CLERK_CLI_OAUTH_CLIENT_ID|RELAY_URL)=' .env.example | sed 's/^/export /')"
           node scripts/update-release-package-versions.ts "$version"
           vp run --filter t3 build
           node apps/server/scripts/cli.ts build-exe --verbose
           cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml \
-            --target x86_64-unknown-linux-gnu
-          mkdir -p "$RUNNER_TEMP/cli-resource-monitor/linux-x64"
-          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor \
-            "$RUNNER_TEMP/cli-resource-monitor/linux-x64/"
-          node scripts/build-cli-archive.ts --platform linux --arch x64 --version "$version" \
+            --target "$rust_target"
+          mkdir -p "$RUNNER_TEMP/cli-resource-monitor/$key"
+          cp "native/resource-monitor/target/$rust_target/release/t3-resource-monitor" \
+            "$RUNNER_TEMP/cli-resource-monitor/$key/"
+          node scripts/build-cli-archive.ts --platform "$PLATFORM" --arch "$arch" --version "$version" \
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" --output-dir release
           node scripts/smoke-cli-archive.ts --archive release/t3-*.tar.gz --expect-version "$version"
 
