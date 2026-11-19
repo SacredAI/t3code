@@ -67,6 +67,9 @@ jobs:
           git fetch --no-tags upstream main "refs/tags/$TAG:refs/upstream-nightly"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Translation catalogs are generated: keep upstream's and generate them again below.
+          echo 'apps/web/src/i18n/translations/*.json merge=keep-current' >> .git/info/attributes
+          git config merge.keep-current.driver true
           # This workflow is fork tooling, not part of the app.
           commits="$(git rev-list --reverse --no-merges upstream/main..HEAD -- . ':(exclude).github/workflows/fork-nightly.yml')"
           git checkout --detach refs/upstream-nightly
@@ -78,6 +81,11 @@ jobs:
           git log --format='- %s' refs/upstream-nightly..HEAD > "$RUNNER_TEMP/notes/fork-commits.md"
 
       - uses: ./.github/actions/setup-ci-deps
+
+      - name: Generate the translation catalogs
+        run: |
+          (cd apps/web && vp run i18n:generate)
+          node scripts/i18n-check.ts
 
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
