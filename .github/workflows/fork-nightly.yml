@@ -71,15 +71,15 @@ jobs:
           # Translation catalogs are generated: keep upstream's and generate them again below.
           echo 'apps/web/src/i18n/translations/*.json merge=keep-current' >> .git/info/attributes
           git config merge.keep-current.driver true
-          # This workflow is fork tooling, not part of the app.
-          commits="$(git rev-list --reverse --no-merges upstream/main..HEAD -- . ':(exclude).github/workflows/fork-nightly.yml')"
-          git checkout --detach refs/upstream-nightly
-          if [ -n "$commits" ]; then
-            git cherry-pick $commits
+          if ! git merge-base --is-ancestor "$(git merge-base upstream/main HEAD)" refs/upstream-nightly; then
+            echo "The fork includes upstream changes newer than $TAG." >&2
+            exit 1
           fi
-          git log --oneline refs/upstream-nightly~1..HEAD
+          git checkout --detach refs/upstream-nightly
+          git merge --no-edit "$GITHUB_SHA"
           mkdir -p "$RUNNER_TEMP/notes"
-          git log --format='- %s' refs/upstream-nightly..HEAD > "$RUNNER_TEMP/notes/fork-commits.md"
+          git log --no-merges --format='- %s' refs/upstream-nightly..HEAD -- . \
+            ':(exclude).github/workflows/fork-nightly.yml' > "$RUNNER_TEMP/notes/fork-commits.md"
 
       - uses: ./.github/actions/setup-ci-deps
 
